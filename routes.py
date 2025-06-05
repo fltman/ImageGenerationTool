@@ -31,54 +31,39 @@ def create_image_variants(image_path, prompt, num_variants=1):
         generated_images = []
         
         for i in range(num_variants):
-            # Using DALL-E 3 for image generation with the uploaded image as reference
-            # Note: DALL-E 3 doesn't support direct image-to-image variation like the original code
-            # We'll use image analysis + generation as a workaround
-            
-            # First, analyze the uploaded image
-            analysis_response = client.chat.completions.create(
-                model="gpt-4o",  # the newest OpenAI model is "gpt-4o" which was released May 13, 2024
-                messages=[
+            # Skickar förfrågan till OpenAI API för att generera ny bildvariant
+            response = client.responses.create(
+                model="gpt-4.1",
+                input=[
                     {
                         "role": "user",
                         "content": [
+                            { "type": "input_text", "text": prompt },  # Textprompt som beskriver önskad förändring
                             {
-                                "type": "text",
-                                "text": f"Analyze this image and then create a detailed prompt for generating a similar image with this modification: {prompt}. Focus on describing the key elements, style, composition, and how to apply the requested changes."
+                                "type": "input_image",
+                                "image_url": f"data:image/jpeg;base64,{base64_image}",  # Originalbilden i base64-format
                             },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
+                        ],
                     }
                 ],
-                max_tokens=500
+                tools=[{"type": "image_generation"}],  # Anger att vi vill generera bilder
             )
-            
-            enhanced_prompt = analysis_response.choices[0].message.content
-            
-            # Generate new image based on the enhanced prompt
-            image_response = client.images.generate(
-                model="dall-e-3",
-                prompt=enhanced_prompt,
-                n=1,
-                size="1024x1024"
-            )
-            
-            # Download and save the generated image
-            import requests
-            image_url = image_response.data[0].url
-            response = requests.get(image_url)
-            
-            if response.status_code == 200:
+
+            # Extraherar bilddata från API-svaret
+            image_data = [
+                output.result
+                for output in response.output
+                if output.type == "image_generation_call"
+            ]
+
+            # Sparar den genererade bilden till fil om data finns
+            if image_data:
+                image_base64 = image_data[0]
                 filename = f"variant_{uuid.uuid4()}_{i}.png"
                 filepath = os.path.join(app.config['GENERATED_FOLDER'], filename)
                 
-                with open(filepath, 'wb') as f:
-                    f.write(response.content)
+                with open(filepath, "wb") as f:
+                    f.write(base64.b64decode(image_base64))
                 
                 generated_images.append({
                     'filename': filename,

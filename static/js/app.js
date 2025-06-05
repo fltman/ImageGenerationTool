@@ -46,31 +46,58 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Handle form submission - temporarily disabled for debugging
-    /*
+    // Handle form submission with AJAX
     if (uploadForm) {
         uploadForm.addEventListener('submit', function(e) {
-            console.log('Form submitted');
-            console.log('Files:', imageInput.files);
-            console.log('Files length:', imageInput.files.length);
+            e.preventDefault(); // Always prevent default form submission
             
             const files = imageInput.files;
             const prompt = document.getElementById('prompt').value.trim();
+            const numVariants = document.getElementById('num_variants').value;
             
-            console.log('Prompt:', prompt);
+            // Basic validation
+            if (files.length === 0) {
+                showAlert('Vänligen välj minst en bild.', 'danger');
+                return;
+            }
             
-            // Only validate prompt, let server handle file validation
             if (!prompt) {
-                e.preventDefault();
                 showAlert('Vänligen ange en prompt.', 'danger');
                 return;
             }
             
-            // Show progress
+            // Create FormData for AJAX upload
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('images', file);
+            }
+            formData.append('prompt', prompt);
+            formData.append('num_variants', numVariants);
+            
+            // Show progress section
             showProgress();
+            
+            // Start AJAX upload
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    startProgressPolling(data.task_id);
+                } else {
+                    hideProgress();
+                    showAlert(data.error, 'danger');
+                }
+            })
+            .catch(error => {
+                hideProgress();
+                showAlert('Ett fel uppstod vid uppladdning: ' + error.message, 'danger');
+                console.error('Upload error:', error);
+            });
         });
     }
-    */
 
     function showProgress() {
         if (progressSection) {
@@ -90,6 +117,74 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Scroll to progress section
             progressSection.scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
+    function hideProgress() {
+        if (progressSection) {
+            progressSection.style.display = 'none';
+            
+            // Re-enable form elements
+            const formElements = uploadForm.querySelectorAll('input, select, textarea, button');
+            formElements.forEach(element => {
+                element.disabled = false;
+            });
+            
+            // Reset submit button
+            submitBtn.innerHTML = `
+                <i class="bi bi-magic me-2"></i>
+                Generera Varianter
+            `;
+        }
+    }
+
+    function startProgressPolling(taskId) {
+        const pollInterval = setInterval(() => {
+            fetch(`/progress/${taskId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateProgress(data.data);
+                        
+                        if (data.data.status === 'completed') {
+                            clearInterval(pollInterval);
+                            window.location.href = `/results/${taskId}`;
+                        } else if (data.data.status === 'error') {
+                            clearInterval(pollInterval);
+                            hideProgress();
+                            showAlert('Fel vid bildgenerering: ' + data.data.error, 'danger');
+                        }
+                    }
+                })
+                .catch(error => {
+                    clearInterval(pollInterval);
+                    hideProgress();
+                    showAlert('Fel vid statusuppdatering: ' + error.message, 'danger');
+                    console.error('Progress polling error:', error);
+                });
+        }, 2000); // Poll every 2 seconds
+    }
+
+    function updateProgress(progressData) {
+        // Update progress text and bar
+        const progressText = progressSection.querySelector('h5');
+        const progressBar = document.getElementById('progressBar');
+        const progressDetails = document.getElementById('progressDetails');
+        
+        if (progressData.status === 'processing') {
+            progressText.textContent = `Bearbetar: ${progressData.current_file}`;
+            progressDetails.textContent = `${progressData.completed_files} av ${progressData.total_files} filer klara`;
+            if (progressBar) {
+                progressBar.style.width = `${progressData.progress}%`;
+                progressBar.setAttribute('aria-valuenow', progressData.progress);
+            }
+        } else if (progressData.status === 'started') {
+            progressText.textContent = 'Startar bildgenerering...';
+            progressDetails.textContent = 'Förbereder filer för bearbetning...';
+            if (progressBar) {
+                progressBar.style.width = '10%';
+                progressBar.setAttribute('aria-valuenow', 10);
+            }
         }
     }
 

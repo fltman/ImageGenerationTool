@@ -2,6 +2,9 @@ import os
 import base64
 import uuid
 import logging
+import json
+import threading
+import time
 from flask import render_template, request, jsonify, send_file, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from openai import OpenAI
@@ -11,6 +14,9 @@ from app import app
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+
+# Global storage for task progress
+task_progress = {}
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
@@ -83,75 +89,121 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
-    """Handle file upload and generate variants"""
+    """Handle file upload and start async processing"""
     try:
-        logging.debug(f"Request files: {request.files}")
-        logging.debug(f"Request form: {request.form}")
-        
         # Check if files were uploaded
         if 'images' not in request.files:
-            logging.error("No 'images' key in request.files")
-            flash('Inga filer valda', 'error')
-            return redirect(url_for('index'))
+            return jsonify({'success': False, 'error': 'Inga filer valda'})
         
         files = request.files.getlist('images')
-        logging.debug(f"Files received: {[f.filename for f in files]}")
-        
         prompt = request.form.get('prompt', '').strip()
         num_variants = int(request.form.get('num_variants', 1))
         
-        logging.debug(f"Prompt: {prompt}")
-        logging.debug(f"Num variants: {num_variants}")
-        
         # Validate inputs
         if not prompt:
-            flash('Prompt måste anges', 'error')
-            return redirect(url_for('index'))
+            return jsonify({'success': False, 'error': 'Prompt måste anges'})
         
         if not (1 <= num_variants <= 10):
-            flash('Antal varianter måste vara mellan 1 och 10', 'error')
-            return redirect(url_for('index'))
+            return jsonify({'success': False, 'error': 'Antal varianter måste vara mellan 1 och 10'})
         
         if not files or all(f.filename == '' or f.filename is None for f in files):
-            logging.error(f"No valid files found. Files: {[(f.filename, f.content_length if hasattr(f, 'content_length') else 'no length') for f in files]}")
-            flash('Inga filer valda', 'error')
-            return redirect(url_for('index'))
+            return jsonify({'success': False, 'error': 'Inga filer valda'})
         
-        results = []
+        # Generate task ID
+        task_id = str(uuid.uuid4())
         
+        # Initialize task progress
+        task_progress[task_id] = {
+            'status': 'started',
+            'progress': 0,
+            'total_files': len([f for f in files if f and f.filename and f.filename != '' and allowed_file(f.filename)]),
+            'completed_files': 0,
+            'results': [],
+            'current_file': '',
+            'error': None
+        }
+        
+        # Save files and start processing in background
+        file_data = []
         for file in files:
             if file and file.filename and file.filename != '' and allowed_file(file.filename):
-                # Save uploaded file
                 filename = secure_filename(file.filename)
                 unique_filename = f"{uuid.uuid4()}_{filename}"
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
                 file.save(filepath)
                 
-                try:
-                    # Generate variants
-                    variants = create_image_variants(filepath, prompt, num_variants)
-                    
-                    results.append({
-                        'original_filename': filename,
-                        'original_path': filepath,
-                        'variants': variants,
-                        'prompt': prompt
-                    })
-                    
-                except Exception as e:
-                    logging.error(f"Error processing {filename}: {str(e)}")
-                    flash(f'Fel vid bearbetning av {filename}: {str(e)}', 'error')
+                file_data.append({
+                    'original_filename': filename,
+                    'filepath': filepath
+                })
         
-        if not results:
-            flash('Inga bilder kunde bearbetas', 'error')
-            return redirect(url_for('index'))
+        # Start background processing
+        thread = threading.Thread(
+            target=process_images_background,
+            args=(task_id, file_data, prompt, num_variants)
+        )
+        thread.daemon = True
+        thread.start()
         
-        return render_template('results.html', results=results)
+        return jsonify({'success': True, 'task_id': task_id})
         
     except Exception as e:
         logging.error(f"Upload error: {str(e)}")
-        flash(f'Ett fel uppstod: {str(e)}', 'error')
+        return jsonify({'success': False, 'error': f'Ett fel uppstod: {str(e)}'})
+
+def process_images_background(task_id, file_data, prompt, num_variants):
+    """Process images in background thread"""
+    try:
+        for i, file_info in enumerate(file_data):
+            # Update progress
+            task_progress[task_id]['current_file'] = file_info['original_filename']
+            task_progress[task_id]['status'] = 'processing'
+            
+            # Generate variants
+            variants = create_image_variants(file_info['filepath'], prompt, num_variants)
+            
+            task_progress[task_id]['results'].append({
+                'original_filename': file_info['original_filename'],
+                'original_path': file_info['filepath'],
+                'variants': variants,
+                'prompt': prompt
+            })
+            
+            # Update progress
+            task_progress[task_id]['completed_files'] = i + 1
+            task_progress[task_id]['progress'] = int((i + 1) / len(file_data) * 100)
+        
+        # Mark as completed
+        task_progress[task_id]['status'] = 'completed'
+        task_progress[task_id]['progress'] = 100
+        
+    except Exception as e:
+        logging.error(f"Background processing error: {str(e)}")
+        task_progress[task_id]['status'] = 'error'
+        task_progress[task_id]['error'] = str(e)
+
+@app.route('/progress/<task_id>')
+def get_progress(task_id):
+    """Get progress of image processing task"""
+    if task_id not in task_progress:
+        return jsonify({'success': False, 'error': 'Task not found'})
+    
+    return jsonify({'success': True, 'data': task_progress[task_id]})
+
+@app.route('/results/<task_id>')
+def get_results(task_id):
+    """Get results page for completed task"""
+    if task_id not in task_progress:
+        flash('Uppgiften kunde inte hittas', 'error')
         return redirect(url_for('index'))
+    
+    task_data = task_progress[task_id]
+    
+    if task_data['status'] != 'completed':
+        flash('Uppgiften är inte klar än', 'error')
+        return redirect(url_for('index'))
+    
+    return render_template('results.html', results=task_data['results'])
 
 @app.route('/download/<filename>')
 def download_file(filename):

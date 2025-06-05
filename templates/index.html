@@ -36,7 +36,7 @@
 
                 <div class="card">
                     <div class="card-body p-4">
-                        <form id="uploadForm" method="POST" action="{{ url_for('upload_files') }}" enctype="multipart/form-data">
+                        <form id="uploadForm" method="POST" action="{{ url_for('upload_files') }}" enctype="multipart/form-data" novalidate>
                             <!-- File Upload Section -->
                             <div class="mb-4">
                                 <label for="images" class="form-label fw-bold">
@@ -48,8 +48,7 @@
                                        id="images" 
                                        name="images" 
                                        accept="image/jpeg,image/jpg,image/png" 
-                                       multiple 
-                                       required>
+                                       multiple>
                                 <div class="form-text">
                                     Accepterade format: JPEG, JPG, PNG. Maximal storlek: 50MB per fil.
                                 </div>

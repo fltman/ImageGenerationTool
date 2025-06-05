@@ -46,7 +46,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Handle form submission
+    // Handle form submission - temporarily disabled for debugging
+    /*
     if (uploadForm) {
         uploadForm.addEventListener('submit', function(e) {
             console.log('Form submitted');
@@ -69,6 +70,7 @@ document.addEventListener('DOMContentLoaded', function() {
             showProgress();
         });
     }
+    */
 
     function showProgress() {
         if (progressSection) {

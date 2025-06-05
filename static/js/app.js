@@ -49,38 +49,20 @@ document.addEventListener('DOMContentLoaded', function() {
     // Handle form submission
     if (uploadForm) {
         uploadForm.addEventListener('submit', function(e) {
+            console.log('Form submitted');
+            console.log('Files:', imageInput.files);
+            console.log('Files length:', imageInput.files.length);
+            
             const files = imageInput.files;
             const prompt = document.getElementById('prompt').value.trim();
             
-            // Validate inputs
-            if (files.length === 0) {
-                e.preventDefault();
-                showAlert('Vänligen välj minst en bild.', 'danger');
-                return;
-            }
+            console.log('Prompt:', prompt);
             
+            // Only validate prompt, let server handle file validation
             if (!prompt) {
                 e.preventDefault();
                 showAlert('Vänligen ange en prompt.', 'danger');
                 return;
-            }
-            
-            // Validate file types and sizes
-            const maxSize = 50 * 1024 * 1024; // 50MB
-            const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
-            
-            for (let file of files) {
-                if (!allowedTypes.includes(file.type)) {
-                    e.preventDefault();
-                    showAlert(`Filtyp inte tillåten: ${file.name}. Endast JPEG, JPG och PNG är tillåtna.`, 'danger');
-                    return;
-                }
-                
-                if (file.size > maxSize) {
-                    e.preventDefault();
-                    showAlert(`Filen är för stor: ${file.name}. Maximal storlek är 50MB.`, 'danger');
-                    return;
-                }
             }
             
             // Show progress

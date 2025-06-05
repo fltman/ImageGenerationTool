@@ -31,44 +31,58 @@ def create_image_variants(image_path, prompt, num_variants=1):
         generated_images = []
         
         for i in range(num_variants):
-            # Skickar förfrågan till OpenAI API för att generera ny bildvariant
-            response = client.responses.create(
-                model="gpt-4.1",
-                input=[
+            # First analyze the image to create a detailed prompt
+            analysis_response = client.chat.completions.create(
+                model="gpt-4o",  # the newest OpenAI model is "gpt-4o" which was released May 13, 2024
+                messages=[
                     {
                         "role": "user",
                         "content": [
-                            { "type": "input_text", "text": prompt },  # Textprompt som beskriver önskad förändring
                             {
-                                "type": "input_image",
-                                "image_url": f"data:image/jpeg;base64,{base64_image}",  # Originalbilden i base64-format
+                                "type": "text",
+                                "text": f"Analyze this image and create a detailed description, then apply this modification: {prompt}. Create a complete prompt for generating a new image with the requested changes."
                             },
-                        ],
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
                     }
                 ],
-                tools=[{"type": "image_generation"}],  # Anger att vi vill generera bilder
+                max_tokens=500
             )
-
-            # Extraherar bilddata från API-svaret
-            image_data = [
-                output.result
-                for output in response.output
-                if output.type == "image_generation_call"
-            ]
-
-            # Sparar den genererade bilden till fil om data finns
-            if image_data:
-                image_base64 = image_data[0]
-                filename = f"variant_{uuid.uuid4()}_{i}.png"
-                filepath = os.path.join(app.config['GENERATED_FOLDER'], filename)
+            
+            enhanced_prompt = analysis_response.choices[0].message.content
+            
+            # Generate new image based on the enhanced prompt
+            if enhanced_prompt:
+                image_response = client.images.generate(
+                    model="dall-e-3",
+                    prompt=enhanced_prompt,
+                    n=1,
+                    size="1024x1024"
+                )
                 
-                with open(filepath, "wb") as f:
-                    f.write(base64.b64decode(image_base64))
-                
-                generated_images.append({
-                    'filename': filename,
-                    'filepath': filepath
-                })
+                # Download and save the generated image
+                import requests
+                if image_response.data and len(image_response.data) > 0:
+                    image_url = image_response.data[0].url
+                    if image_url:
+                        http_response = requests.get(image_url)
+                        
+                        if http_response.status_code == 200:
+                            filename = f"variant_{uuid.uuid4()}_{i}.png"
+                            filepath = os.path.join(app.config['GENERATED_FOLDER'], filename)
+                            
+                            with open(filepath, 'wb') as f:
+                                f.write(http_response.content)
+                            
+                            generated_images.append({
+                                'filename': filename,
+                                'filepath': filepath
+                            })
         
         return generated_images
         
@@ -110,7 +124,7 @@ def upload_files():
         results = []
         
         for file in files:
-            if file and file.filename != '' and allowed_file(file.filename):
+            if file and file.filename and file.filename != '' and allowed_file(file.filename):
                 # Save uploaded file
                 filename = secure_filename(file.filename)
                 unique_filename = f"{uuid.uuid4()}_{filename}"

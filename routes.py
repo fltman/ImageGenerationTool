@@ -85,14 +85,23 @@ def index():
 def upload_files():
     """Handle file upload and generate variants"""
     try:
+        logging.debug(f"Request files: {request.files}")
+        logging.debug(f"Request form: {request.form}")
+        
         # Check if files were uploaded
         if 'images' not in request.files:
+            logging.error("No 'images' key in request.files")
             flash('Inga filer valda', 'error')
             return redirect(url_for('index'))
         
         files = request.files.getlist('images')
+        logging.debug(f"Files received: {[f.filename for f in files]}")
+        
         prompt = request.form.get('prompt', '').strip()
         num_variants = int(request.form.get('num_variants', 1))
+        
+        logging.debug(f"Prompt: {prompt}")
+        logging.debug(f"Num variants: {num_variants}")
         
         # Validate inputs
         if not prompt:
@@ -103,7 +112,8 @@ def upload_files():
             flash('Antal varianter måste vara mellan 1 och 10', 'error')
             return redirect(url_for('index'))
         
-        if not files or all(f.filename == '' for f in files):
+        if not files or all(f.filename == '' or f.filename is None for f in files):
+            logging.error(f"No valid files found. Files: {[(f.filename, f.content_length if hasattr(f, 'content_length') else 'no length') for f in files]}")
             flash('Inga filer valda', 'error')
             return redirect(url_for('index'))
         

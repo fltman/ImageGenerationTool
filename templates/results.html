@@ -128,7 +128,10 @@
                         </h5>
                         <p class="card-text">
                             {% set total_images = results|length %}
-                            {% set total_variants = results|sum(attribute='variants')|length %}
+                            {% set total_variants = 0 %}
+                            {% for result in results %}
+                                {% set total_variants = total_variants + result.variants|length %}
+                            {% endfor %}
                             Totalt {{ total_images }} {% if total_images == 1 %}bild{% else %}bilder{% endif %} bearbetade, 
                             {{ total_variants }} {% if total_variants == 1 %}variant{% else %}varianter{% endif %} genererade.
                         </p>

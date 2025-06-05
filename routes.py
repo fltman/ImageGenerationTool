@@ -5,6 +5,7 @@ import logging
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import render_template, request, jsonify, send_file, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from openai import OpenAI
@@ -28,53 +29,82 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
+def create_single_variant(image_path, prompt, variant_index):
+    """Create a single image variant - for parallel processing"""
+    try:
+        # Konverterar originalbilden till base64-sträng
+        base64_image = encode_image(image_path)
+
+        # Skickar förfrågan till OpenAI API för att generera ny bildvariant
+        response = client.responses.create(
+            model="gpt-4.1",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": prompt },  # Textprompt som beskriver önskad förändring
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{base64_image}",  # Originalbilden i base64-format
+                        },
+                    ],
+                }
+            ],
+            tools=[{"type": "image_generation"}],  # Anger att vi vill generera bilder
+        )
+
+        # Extraherar bilddata från API-svaret
+        image_data = [
+            output.result
+            for output in response.output
+            if output.type == "image_generation_call"
+        ]
+
+        # Sparar den genererade bilden till fil om data finns
+        if image_data:
+            image_base64 = image_data[0]
+            filename = f"variant_{uuid.uuid4()}_{variant_index}.png"
+            filepath = os.path.join(app.config['GENERATED_FOLDER'], filename)
+            
+            with open(filepath, "wb") as f:
+                f.write(base64.b64decode(image_base64))
+            
+            return {
+                'filename': filename,
+                'filepath': filepath,
+                'index': variant_index
+            }
+        
+        return None
+        
+    except Exception as e:
+        logging.error(f"Error creating variant {variant_index}: {str(e)}")
+        raise e
+
 def create_image_variants(image_path, prompt, num_variants=1):
-    """Create image variants using OpenAI API based on the original code pattern"""
+    """Create image variants using parallel processing"""
     try:
         generated_images = []
         
-        for i in range(num_variants):
-            # Konverterar originalbilden till base64-sträng
-            base64_image = encode_image(image_path)
-
-            # Skickar förfrågan till OpenAI API för att generera ny bildvariant
-            response = client.responses.create(
-                model="gpt-4.1",
-                input=[
-                    {
-                        "role": "user",
-                        "content": [
-                            { "type": "input_text", "text": prompt },  # Textprompt som beskriver önskad förändring
-                            {
-                                "type": "input_image",
-                                "image_url": f"data:image/jpeg;base64,{base64_image}",  # Originalbilden i base64-format
-                            },
-                        ],
-                    }
-                ],
-                tools=[{"type": "image_generation"}],  # Anger att vi vill generera bilder
-            )
-
-            # Extraherar bilddata från API-svaret
-            image_data = [
-                output.result
-                for output in response.output
-                if output.type == "image_generation_call"
-            ]
-
-            # Sparar den genererade bilden till fil om data finns
-            if image_data:
-                image_base64 = image_data[0]
-                filename = f"variant_{uuid.uuid4()}_{i}.png"
-                filepath = os.path.join(app.config['GENERATED_FOLDER'], filename)
-                
-                with open(filepath, "wb") as f:
-                    f.write(base64.b64decode(image_base64))
-                
-                generated_images.append({
-                    'filename': filename,
-                    'filepath': filepath
-                })
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=min(num_variants, 5)) as executor:
+            # Submit all variant generation tasks
+            future_to_index = {
+                executor.submit(create_single_variant, image_path, prompt, i): i 
+                for i in range(num_variants)
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_index):
+                try:
+                    result = future.result()
+                    if result:
+                        generated_images.append(result)
+                except Exception as e:
+                    logging.error(f"Variant generation failed: {str(e)}")
+        
+        # Sort by index to maintain order
+        generated_images.sort(key=lambda x: x['index'])
         
         return generated_images
         
@@ -152,14 +182,15 @@ def upload_files():
         return jsonify({'success': False, 'error': f'Ett fel uppstod: {str(e)}'})
 
 def process_images_background(task_id, file_data, prompt, num_variants):
-    """Process images in background thread"""
+    """Process images in background thread with parallel variant generation"""
     try:
         for i, file_info in enumerate(file_data):
             # Update progress
             task_progress[task_id]['current_file'] = file_info['original_filename']
             task_progress[task_id]['status'] = 'processing'
+            task_progress[task_id]['current_operation'] = f'Genererar {num_variants} varianter parallellt...'
             
-            # Generate variants
+            # Generate variants (now runs in parallel)
             variants = create_image_variants(file_info['filepath'], prompt, num_variants)
             
             task_progress[task_id]['results'].append({
@@ -176,6 +207,7 @@ def process_images_background(task_id, file_data, prompt, num_variants):
         # Mark as completed
         task_progress[task_id]['status'] = 'completed'
         task_progress[task_id]['progress'] = 100
+        task_progress[task_id]['current_operation'] = 'Klart!'
         
     except Exception as e:
         logging.error(f"Background processing error: {str(e)}")

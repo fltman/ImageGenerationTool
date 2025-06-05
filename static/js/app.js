@@ -173,7 +173,11 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (progressData.status === 'processing') {
             progressText.textContent = `Bearbetar: ${progressData.current_file}`;
-            progressDetails.textContent = `${progressData.completed_files} av ${progressData.total_files} filer klara`;
+            let detailText = `${progressData.completed_files} av ${progressData.total_files} filer klara`;
+            if (progressData.current_operation) {
+                detailText += ` - ${progressData.current_operation}`;
+            }
+            progressDetails.textContent = detailText;
             if (progressBar) {
                 progressBar.style.width = `${progressData.progress}%`;
                 progressBar.setAttribute('aria-valuenow', progressData.progress);
@@ -184,6 +188,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (progressBar) {
                 progressBar.style.width = '10%';
                 progressBar.setAttribute('aria-valuenow', 10);
+            }
+        } else if (progressData.status === 'completed') {
+            progressText.textContent = 'Bildgenerering klar!';
+            progressDetails.textContent = `Alla ${progressData.total_files} filer bearbetade`;
+            if (progressBar) {
+                progressBar.style.width = '100%';
+                progressBar.setAttribute('aria-valuenow', 100);
             }
         }
     }
